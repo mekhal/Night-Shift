@@ -1,0 +1,21 @@
+# Task file format. Written with the maintainer in a planning session and committed on develop.
+# The night shift never edits this file (docs/superpowers/** is a human-only path).
+
+plan = "docs/superpowers/plans/2026-09-18-spike.md"
+
+[[task]]
+id = "SPK-01"
+title = "Synthetic invoice generator"
+tier = "green"            # green | yellow | red (red is never run unattended)
+review = "technical"      # technical = Claude; joint = Claude + Codex (docs, generated UI, images)
+paths = ["spike/generator/**", "spike/tests/test_generator.py"]
+depends_on = []
+no_tests = false          # true only when the task cannot have tests (e.g. pure docs)
+body = """
+Generate synthetic PNG invoices with Pillow for the feasibility spike.
+
+Acceptance criteria:
+- Two layouts, each with header fields and a line-item table.
+- Deterministic output for a given seed; ground truth written as JSON next to each image.
+- No real names, addresses or numbers.
+"""

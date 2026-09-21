@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Night Shift</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <h1>Night Shift</h1>
+      <span class="sub">PrivaSheet · unattended loop</span>
+    </div>
+    <div class="top-right">
+      <span id="mode" class="pill">mode</span>
+      <span id="alive" class="pill">…</span>
+    </div>
+  </header>
+
+  <main>
+    <div id="alerts"></div>
+
+    <section class="now card" role="status" aria-live="polite">
+      <div class="label">Now</div>
+      <div id="now-main" class="now-main">Loading…</div>
+      <div id="now-sub" class="now-sub"></div>
+    </section>
+
+    <section id="counts" class="counts"></section>
+
+    <section class="card">
+      <h2>Needs human</h2>
+      <p class="hint">Open the reason, then answer from a Windows terminal with the command shown (retry or skip, score 1–5).</p>
+      <div id="human"></div>
+    </section>
+
+    <section class="card">
+      <h2>Tasks</h2>
+      <div class="scroll"><table id="tasks"></table></div>
+    </section>
+
+    <section class="card">
+      <h2>Recent runs</h2>
+      <div class="scroll"><table id="runs"></table></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span id="updated">—</span> · read-only · refreshes every 5 s
+  </footer>
+</body>
+</html>

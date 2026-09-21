@@ -1,0 +1,26 @@
+[project]
+name = "nightshift"
+version = "0.1.0"
+description = "Unattended agentic software development with deterministic gates, independent review, and human escalation"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+nightshift = "nightshift.__main__:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["nightshift", "nightshift.static"]
+
+[tool.setuptools.package-data]
+"nightshift.static" = ["*.html", "*.css", "*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

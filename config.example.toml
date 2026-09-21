@@ -1,0 +1,80 @@
+# Night shift configuration — copied to /home/agent/nightshift/config.toml on first install.
+# Edit from Windows: \\wsl.localhost\privasheet-dev\home\agent\nightshift\config.toml
+# Changes apply before the next task and before every step (no restart needed).
+
+# off | dry-run | on-limited | on
+#   off        stop picking tasks (a running step is abandoned and the task returns to the queue)
+#   dry-run    full cycle, never merges; approved tasks end as would_merge
+#   on-limited merge approved green tasks
+#   on         merge approved green and yellow tasks
+mode = "dry-run"
+
+repo = "~/work/PrivaSheet"
+# Task file written in a planning session; path is relative to repo (must be committed on develop).
+tasks_file = "docs/superpowers/plans/nightshift.tasks.toml"
+base_branch = "develop"
+state_dir = "~/nightshift"
+worktrees = "~/work/wt"
+port = 8770
+
+[timeouts]  # seconds
+implement = 2700
+gates = 900
+review = 900
+
+[limits]
+max_attempts = 3        # cycles per task before it goes to needs-human
+max_fix_rounds = 2      # review "changes" rounds per cycle
+breaker_threshold = 3   # failed cycles in a row before the circuit breaker opens
+max_diff_lines = 400
+quota_poll_s = 300      # re-check a usage limit this often when the agent named no reset time
+idle_poll_s = 300
+off_poll_s = 60
+
+# Gates run in the task worktree and again on develop after merge. Use the project venv.
+[[gates]]
+name = "pytest"
+cmd = ["/home/agent/work/.venv/bin/python", "-m", "pytest", "-q"]
+
+[[gates]]
+name = "ruff-check"
+cmd = ["/home/agent/work/.venv/bin/ruff", "check", "."]
+
+[[gates]]
+name = "ruff-format"
+cmd = ["/home/agent/work/.venv/bin/ruff", "format", "--check", "."]
+
+[agents]
+# {worktree} is replaced with the task worktree path. The prompt is sent on stdin.
+implement = ["codex", "exec", "-m", "gpt-5.5", "--sandbox", "workspace-write", "--cd", "{worktree}", "-"]
+codex_review = ["codex", "exec", "--sandbox", "read-only", "--cd", "{worktree}", "-"]
+# --tools limits built-in tools only; --strict-mcp-config and mcp__* remove claude.ai connector tools (phase 0 finding).
+# Bash is included so the reviewer can check an installed library's real API instead of guessing (OCR-01 burned three
+# review rounds on a guess). The prompt forbids writing, installing and network use; the sandbox does not enforce it.
+claude_review = ["claude", "-p", "--output-format", "text", "--model", "opus", "--tools", "Read,Grep,Glob,Bash", "--strict-mcp-config", "--disallowedTools", "mcp__*", "--permission-mode", "dontAsk"]
+# While Codex has no quota, Claude Sonnet takes the Codex seat of a joint review (maintainer decision
+# 2026-09-21), so a joint task does not wait days for Codex. Same read-only tools as the Claude reviewer.
+# Remove the line to make joint tasks wait for Codex instead.
+codex_review_fallback = ["claude", "-p", "--output-format", "text", "--model", "sonnet", "--tools", "Read,Grep,Glob,Bash", "--strict-mcp-config", "--disallowedTools", "mcp__*", "--permission-mode", "dontAsk"]
+
+# Who writes the code while the ones above them are out of quota, tried in this order (maintainer decision
+# 2026-09-21: gpt-5.5 via codex, then gemini-3.7-flash, then claude sonnet). The orchestrator returns to codex as soon as its limit
+# resets. These run in the task worktree (cwd), so they need no --cd. An agent that is not installed or not
+# logged in is skipped without costing the task an attempt. Reviewing stays with Claude.
+[[agents.implement_fallbacks]]
+provider = "gemini"
+cmd = ["gemini", "-m", "gemini-3.7-flash", "--yolo", "--output-format", "text", "--skip-trust", "-p", "Carry out the task above now."]
+
+[[agents.implement_fallbacks]]
+provider = "claude"
+cmd = ["claude", "-p", "--output-format", "text", "--model", "sonnet",
+       "--permission-mode", "bypassPermissions",
+       "--strict-mcp-config", "--disallowedTools", "mcp__*"]
+
+# Which subscription each agent spends. Agents sharing a provider share one usage limit, so the Claude reviewer
+# hitting a limit also parks the Claude implementer. Only set this if you change what a command actually runs.
+[agents.providers]
+implement = "codex"
+codex_review = "codex"
+codex_review_fallback = "claude"
+claude_review = "claude"
