@@ -15,12 +15,32 @@ agent a task needs is out of quota, it waits for the earliest reset and continue
 This README still describes the PrivaSheet installation (distro `privasheet-dev`, PrivaSheet paths and gates). The
 section [Note: future template](#note-future-template) lists what to change to use it on another project.
 
-```text
-pick next eligible task → coding chain implements (tests first) → deterministic gates → review → merge into develop
-                                   ▲                              │ fail once       │ changes (≤ 2 rounds)
-                                   └──────────── fix ◄────────────┴─────────────────┘
-anything else (second gate failure, escalate, reviewers disagree, 3 attempts, post-merge failure) → needs-human
-```
+![Night-Shift workflow: human requirements and plan approval, GPT-5.5 or Sonnet implementation, primary review by Claude Opus with Astra for joint tasks, bounded fixes and human escalation.](images/workflow-v3.png)
+
+*Figure 1. The human provides requirements and reviews the AI-generated plan. Implementation agents write tests
+and code, then the planning/review models return for an independent review. Findings trigger another fix-and-review
+cycle; reaching the retry limit or an issue the AI cannot decide sends the decision back to the human.*
+
+The division of work uses the maintainer's subscription models as follows. Claude Opus is the primary reviewer
+for every task; GPT-6-Astra adds a second review for `joint` tasks. These model roles were configured on 2026-09-23.
+Planning and human approval happen before tasks enter the unattended queue.
+
+1. **Human supplies requirements.** Define the desired behavior, constraints and acceptance criteria.
+2. **AI prepares the plan.** Claude Opus + ChatGPT 6 astra turn those requirements into implementation tasks,
+   a test strategy and acceptance criteria for the human to review.
+3. **Human reviews and approves the plan.** Request changes where needed, then approve the task file before
+   autonomous implementation starts. Planning happens with the maintainer, outside the unattended execution loop.
+4. **AI writes tests and code.** ChatGPT 5 or Claude Sonnet implements the approved tasks tests-first.
+   Deterministic gates check the result before AI review.
+5. **The planning/review models return to review.** Claude Opus is the primary reviewer for every task.
+   ChatGPT 6 astra (`gpt-6-astra`) adds an independent review for `joint` tasks; both must approve. Reviewers inspect
+   the implementation and tests against the approved requirements in a separate, read-only role. They send findings
+   and correction instructions to the implementer; they do not modify or approve their own implementation.
+6. **AI loops on fixable findings.** The implementer fixes the work, the gates run again, and the reviewer checks
+   the revised result. Approved work proceeds to merge into `develop`.
+7. **Human decides unresolved cases.** If the configured retry limit is reached, reviewers disagree, or the AI
+   cannot decide, the loop escalates with the reason and available options. The human decides whether to revise
+   the task and retry or skip it. Releases from `develop` to `main` remain human-only.
 
 ## Relation to AI-DLC
 
@@ -35,6 +55,13 @@ Night-Shift keeps the loop but makes review **exception-based**: AI reviewers ta
 human is called only when the AIs cannot decide. The work comes from a task file, not from issues, and runs on the
 maintainer's machine, not on GitHub runners.
 
+![AI-DLC and Night-Shift comparison showing how routine human reviews become automated gates and AI review.](images/ai-dlc-comparison.png)
+
+*Figure 2. Night-Shift automates routine implementation and review while people supply requirements, review the
+AI-generated plan, resolve escalations and control releases to main. The compact "Human-approved tasks" box
+includes the requirements, AI planning and human approval stages expanded in Figure 1. Review findings loop back
+to implementation; repeated failures or decisions the AI cannot make return to the human.*
+
 | AI-DLC step (radio-calico) | Actor there | In the night shift |
 |---|---|---|
 | 1 Open an issue | Human | Planning session: the maintainer and Claude write tasks into the task file. |
@@ -43,39 +70,28 @@ maintainer's machine, not on GitHub runners.
 | 4 Failing tests → Test PR | AI | Implementer writes the tests first, in the same worktree. The `new-tests` and `tests-weakened` gates enforce it. |
 | 5 Approve the Test PR | Human | AI: the reviewer checks the tests against the acceptance criteria. No separate Test PR. |
 | 6 Code → Code PR | AI | Implementer writes the code, then deterministic gates run. |
-| 7 Review and merge into `develop` | Human | AI: Claude Opus reviews (plus Codex, or its Sonnet stand-in, for `joint`). An approved `green` task merges automatically. The human reviews only escalations. |
+| 7 Review and merge into `develop` | Human | AI: Claude Opus is the primary reviewer (plus Codex GPT-6-Astra for `joint`). An approved `green` task merges automatically. The human reviews only escalations. |
 | (release) `develop` → `main` | Human | **Human** only. The night shift never touches `main`. |
 
 ### The loop between the AIs
 
-```mermaid
-flowchart TD
-    TF[/"Task file on develop<br/>(written with the maintainer)"/] --> PICK
-    PICK["Supervisor picks the next eligible task<br/>(green, dependencies merged, quota available)"] --> IMPL
-    IMPL["Coding chain writes tests first, then code<br/>gpt-5.5 → gemini-3.7-flash → Claude Sonnet"] --> GATES
-    GATES{"Deterministic gates<br/>scope · red paths · size · tests<br/>pytest · ruff · node"}
-    GATES -- "fail (first time)" --> FIX["Coding chain fixes"]
-    FIX --> GATES
-    GATES -- pass --> REV{"AI review (read-only)<br/>Claude Opus<br/>+ Codex / Sonnet stand-in for joint"}
-    REV -- "changes (≤ 2 rounds)" --> FIX
-    REV -- approve --> MERGE["merge --no-ff into develop<br/>trailers: Implemented-by, Reviewed-by, …"]
-    MERGE --> POST{"Gates again on develop"}
-    POST -- pass --> SYNC["Sync job pushes develop to GitHub<br/>(every 30 min, fast-forward only)"]
-    SYNC --> PICK
-    POST -- fail --> REVERT["Revert merge + open circuit breaker"]
+![The AI loop: pick an approved task, implement tests and code, run gates, and review with Claude Opus; fix findings or escalate unresolved decisions to a human.](images/ai-review-loop.png)
 
-    GATES -- "fail after a fix" --> NH
-    REV -- "escalate / reviewers disagree / red risk" --> NH
-    REV -- "still not approved after 2 fix rounds" --> NH
-    NH[["needs-human escalation"]]
+*The implementer writes and fixes; Claude Opus is the primary reviewer, with GPT-6-Astra added for joint tasks.
+Teal shows the path toward approval, purple shows the fix loop, and amber marks decisions that need a human.*
 
-    classDef human fill:#fde68a,stroke:#b45309,color:#000
-    class TF,NH,REVERT human
-```
-
-Yellow boxes are where the loop stops for a human. Everything else runs AI to AI. Two roles are always kept
-separate: the **implementer** writes and fixes, and the **reviewer** only reads. A reviewer never fixes code, and
-an implementer never approves its own work.
+- **Start with approved work.** The supervisor picks an eligible task once its dependencies are merged and the
+  required agents have quota. GPT-5.5 implements it tests-first, with Claude Sonnet as fallback.
+- **Check, review, then fix.** Deterministic gates run before the read-only AI review. Findings return to the
+  implementer, and every fix passes through the gates again. Reviewers give feedback; they do not edit the code.
+- **Keep retries bounded.** A gate failure gets one fix; another failure escalates. Each review fix gets its own
+  gate retry. Review can request up to two fix rounds per cycle. Ordinary failed attempts are capped at three;
+  an explicit escalation or reviewer disagreement goes straight to the human.
+- **Approve and continue.** Approved work merges into local `develop`, where gates run again. A post-merge failure
+  reverts the merge and opens the circuit breaker for human intervention. On success, the supervisor can pick the
+  next task; a separate sync job publishes `develop` to GitHub every 30 minutes. Releases to `main` remain human-only.
+- **Ask the human when needed.** Unresolved findings, exhausted retries or a decision the AI cannot make become
+  `needs-human`. The maintainer reads the reason and chooses whether to revise and retry or skip the task.
 
 ### Where the human reviews
 
@@ -94,13 +110,12 @@ an implementer never approves its own work.
   (`docs/superpowers/plans/nightshift.tasks.toml`; format in `tasks.example.toml`). A task runs once its
   `depends_on` tasks are merged. Mode `on-limited` runs `green` tasks, `on` also runs `yellow`; `red` never runs.
   The night shift never edits the task file. With an empty queue the loop idles and re-reads it every 5 minutes.
-- **Who writes the code** is a chain, tried in order (maintainer decision 2026-09-21):
+- **Who writes the code** is a chain, tried in order (maintainer decision 2026-09-23):
 
-  | # | Agent | Model | Status 2026-09-21 |
+  | # | Agent | Model | Status 2026-09-23 |
   |---|---|---|---|
   | 1 | Codex (ChatGPT) | `gpt-5.5` | main implementer |
-  | 2 | Gemini CLI | `gemini-3.7-flash` | skipped: the free-tier login no longer works with the CLI |
-  | 3 | Claude Code | `sonnet` | used while the ones above are out |
+  | 2 | Claude Code | `sonnet` | implementation fallback |
 
   A fallback only covers the agents before it, so the loop goes back to Codex as soon as its limit resets. An agent
   that is not installed, not logged in, or whose account can no longer use it is skipped without costing the task an
@@ -110,8 +125,8 @@ an implementer never approves its own work.
 
   | Task `review` | Reviewers | While Codex is out of quota |
   |---|---|---|
-  | `technical` (code, tests) | Claude `opus` | unchanged |
-  | `joint` (docs, generated UI, images) | Claude `opus` + Codex `gpt-5.5`; both must approve | Claude `sonnet` takes the Codex seat (`codex_review_fallback`) |
+  | `technical` (code, tests) | Claude `opus` (primary reviewer) | unchanged |
+  | `joint` (docs, generated UI, images) | Claude `opus` (primary) + Codex `gpt-6-astra` (`high` reasoning); both must approve | Wait for Codex quota; no reviewer fallback |
 
   A reviewer answers `approve`, `changes` or `escalate` with a risk rating. `changes` goes back to the coding chain
   (at most 2 rounds); `escalate`, a disagreement between joint reviewers, or a `red` rating goes to the human.
@@ -122,14 +137,15 @@ an implementer never approves its own work.
   One failure gets one fix; a second goes to the human.
 - **Merge**: `git merge --no-ff` into the local `develop` in WSL with trailers `Task`, `Plan`, `Risk`, `Decided-by`,
   `Reviewed-by`, `Implemented-by`, `Review-run`. `Implemented-by` names the agents that actually wrote the code and
-  `Reviewed-by` the reviewers (for example `claude+codex-fallback:claude`), so a fallback is visible in git history.
+  `Reviewed-by` the reviewers (`claude` or `claude+codex`). Historical Sonnet stand-ins appear as
+  `claude+codex-fallback:claude` in older merges.
   The gates run again on `develop`; a failure reverts the merge and opens the circuit breaker.
 - **Publishing**: a Windows scheduled job (`scripts/sync-github.ps1`, every 30 minutes) copies `develop` out of WSL
   with `git bundle` and pushes it to GitHub `develop` with the maintainer's credentials: fast-forward only, and only
   when every new commit uses an allowed email. `main` is never touched; it stays human-only.
 - **Usage limits** are tracked per provider (`codex`, `gemini`, `claude`), so one running out does not park the
   others. Before starting a task the loop checks that one implementer and every reviewer the task needs have quota
-  (the Codex seat counts as covered while its stand-in has quota). If not, the task waits without losing an attempt
+  (a joint task needs both Opus and Astra). If not, the task waits without losing an attempt
   until the earliest reset. A reset time the agent names is believed, including a date days ahead; otherwise the
   agent is re-checked every `quota_poll_s`.
 - **Failures**: a task gets `max_attempts` cycles, then goes to needs-human. `breaker_threshold` failed cycles in a
@@ -150,6 +166,12 @@ an implementer never approves its own work.
 
 ## Where things run
 
+![Night-Shift architecture: WSL runs the agents, Windows publishes develop through a sync job, and GitHub hosts the branches.](images/architecture.png)
+
+*Figure 3. Agents work inside WSL without GitHub credentials. A Windows scheduled sync job transfers local develop
+via git bundle and pushes it to GitHub every 30 minutes. Publishing is fast-forward only; releases from develop to
+main remain a human decision.*
+
 | Where | What |
 |---|---|
 | Task Scheduler "PrivaSheet Night Shift" | Starts `nightshift run` at logon and every 15 minutes; a second instance exits immediately. |
@@ -168,7 +190,6 @@ From Windows PowerShell in this folder:
 ```powershell
 .\scripts\deploy.ps1          # copies the code into WSL and installs it (safe to re-run; keeps config.toml)
 wsl -d privasheet-dev -u agent -- bash -lc "codex login"   # log in once (ChatGPT subscription)
-wsl -d privasheet-dev -u agent -- bash -lc "gemini"        # log in once (/auth; the free tier no longer works)
 wsl -d privasheet-dev -u agent -- bash -lc "claude"        # log in once (Claude subscription)
 .\scripts\register-task.ps1       # the 24-hour loop (at logon + every 15 minutes)
 .\scripts\register-sync-task.ps1  # publish develop to GitHub every 30 minutes
@@ -314,6 +335,16 @@ Python 3.12 standard library only.
   tried. That error now counts as "cannot run", and the chain moves on at no cost to the task.
 - Coding order set by the maintainer, models spelled out: gpt-5.5 (Codex) → gemini-3.7-flash → Claude Sonnet.
   Gemini stays in the chain but is skipped until its login works again (a paid tier, or an API key).
+
+**Changes (2026-09-23) — maintainer decision:**
+
+- Human requirements → planning with Claude Opus + ChatGPT 6 astra → human approval of the task file.
+- Tests and code use GPT-5.5, with Claude Sonnet as fallback; Gemini is removed from the coding chain.
+- Claude Opus is the primary reviewer for every task. Joint tasks also use GPT-6-Astra with high reasoning,
+  explicitly selected in the reviewer command rather than inherited from the CLI default.
+- Joint review waits for Astra quota instead of using Sonnet as a reviewer stand-in. Earlier fallback decisions
+  above are historical and are superseded by this configuration.
+- Existing gates, two review fix rounds, three attempts and human escalation remain in force.
 
 ## License
 

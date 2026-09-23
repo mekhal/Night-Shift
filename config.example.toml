@@ -47,24 +47,17 @@ cmd = ["/home/agent/work/.venv/bin/ruff", "format", "--check", "."]
 [agents]
 # {worktree} is replaced with the task worktree path. The prompt is sent on stdin.
 implement = ["codex", "exec", "-m", "gpt-5.5", "--sandbox", "workspace-write", "--cd", "{worktree}", "-"]
-codex_review = ["codex", "exec", "--sandbox", "read-only", "--cd", "{worktree}", "-"]
+codex_review = ["codex", "exec", "-m", "gpt-6-astra", "-c", "model_reasoning_effort=\"high\"", "--sandbox", "read-only", "--cd", "{worktree}", "-"]
 # --tools limits built-in tools only; --strict-mcp-config and mcp__* remove claude.ai connector tools (phase 0 finding).
 # Bash is included so the reviewer can check an installed library's real API instead of guessing (OCR-01 burned three
 # review rounds on a guess). The prompt forbids writing, installing and network use; the sandbox does not enforce it.
 claude_review = ["claude", "-p", "--output-format", "text", "--model", "opus", "--tools", "Read,Grep,Glob,Bash", "--strict-mcp-config", "--disallowedTools", "mcp__*", "--permission-mode", "dontAsk"]
-# While Codex has no quota, Claude Sonnet takes the Codex seat of a joint review (maintainer decision
-# 2026-09-21), so a joint task does not wait days for Codex. Same read-only tools as the Claude reviewer.
-# Remove the line to make joint tasks wait for Codex instead.
-codex_review_fallback = ["claude", "-p", "--output-format", "text", "--model", "sonnet", "--tools", "Read,Grep,Glob,Bash", "--strict-mcp-config", "--disallowedTools", "mcp__*", "--permission-mode", "dontAsk"]
+# Opus is the primary reviewer for every task; Astra adds an independent review for joint tasks.
+# Joint tasks wait for Astra quota rather than substituting an implementation-tier model.
+codex_review_fallback = []
 
-# Who writes the code while the ones above them are out of quota, tried in this order (maintainer decision
-# 2026-09-21: gpt-5.5 via codex, then gemini-3.7-flash, then claude sonnet). The orchestrator returns to codex as soon as its limit
-# resets. These run in the task worktree (cwd), so they need no --cd. An agent that is not installed or not
-# logged in is skipped without costing the task an attempt. Reviewing stays with Claude.
-[[agents.implement_fallbacks]]
-provider = "gemini"
-cmd = ["gemini", "-m", "gemini-3.7-flash", "--yolo", "--output-format", "text", "--skip-trust", "-p", "Carry out the task above now."]
-
+# Coding chain (maintainer decision 2026-09-23): GPT-5.5, then Claude Sonnet.
+# Fixes use the same chain; Opus remains the primary reviewer regardless of who implements.
 [[agents.implement_fallbacks]]
 provider = "claude"
 cmd = ["claude", "-p", "--output-format", "text", "--model", "sonnet",

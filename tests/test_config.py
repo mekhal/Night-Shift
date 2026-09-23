@@ -45,8 +45,8 @@ def test_no_implement_fallback_unless_one_is_configured(tmp_path):
     assert cfg.limits.quota_poll_s == 300
 
 
-def test_shipped_example_config_codes_with_gpt_then_gemini_then_sonnet(tmp_path):
-    # Maintainer decision 2026-09-21: gpt-5.5 (codex) > gemini-3.7-flash > claude sonnet, models spelled out.
+def test_shipped_example_config_codes_with_gpt_then_sonnet(tmp_path):
+    # Implementation models are distinct from the primary and joint review models.
     example = (Path(__file__).parent.parent / "config.example.toml").read_text(encoding="utf-8")
 
     cfg = load_config(write(tmp_path, example))
@@ -56,19 +56,20 @@ def test_shipped_example_config_codes_with_gpt_then_gemini_then_sonnet(tmp_path)
         flag = "--model" if "--model" in cmd else "-m"
         return cmd[cmd.index(flag) + 1]
 
-    assert [i.provider for i in chain] == ["codex", "gemini", "claude"]
-    assert [model(i.cmd) for i in chain] == ["gpt-5.5", "gemini-3.7-flash", "sonnet"]
+    assert [i.provider for i in chain] == ["codex", "claude"]
+    assert [model(i.cmd) for i in chain] == ["gpt-5.5", "sonnet"]
     assert cfg.agents.provider_of("claude_review") == "claude"  # same subscription, so one shared limit
 
 
-def test_the_shipped_codex_review_stand_in_is_read_only_sonnet(tmp_path):
+def test_shipped_joint_review_pins_astra_and_waits_instead_of_using_sonnet(tmp_path):
     example = (Path(__file__).parent.parent / "config.example.toml").read_text(encoding="utf-8")
 
-    cmd = load_config(write(tmp_path, example)).agents.codex_review_fallback
-
-    assert cmd[cmd.index("--model") + 1] == "sonnet"
-    assert cmd[cmd.index("--tools") + 1] == "Read,Grep,Glob,Bash"
-    assert "bypassPermissions" not in cmd
+    agents = load_config(write(tmp_path, example)).agents
+    cmd = agents.codex_review
+    assert cmd[cmd.index("-m") + 1] == "gpt-6-astra"
+    assert cmd[cmd.index("--sandbox") + 1] == "read-only"
+    assert 'model_reasoning_effort="high"' in cmd
+    assert agents.codex_review_fallback == []
 
 
 def test_the_shipped_reviewer_is_claude_opus(tmp_path):
